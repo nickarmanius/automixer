@@ -1,0 +1,33 @@
+name: Build iOS app
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        run: npm install
+      - name: Create iOS project
+        run: npx cap add ios
+      - name: Enable background audio
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" ios/App/App/Info.plist
+          python3 scripts/patch.py
+          cp www/icon-1024.png ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png || echo "icon skipped"
+      - name: Build
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      - name: Package ipa
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qr Automixer.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Automixer-ipa
+          path: Automixer.ipa
