@@ -53,6 +53,7 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <label>Switch songs every (seconds)<input id="iv" type="number" min="10" max="600" inputmode="numeric"></label>
 <label>Fade length (seconds)<input id="fd" type="number" min="1" max="30" inputmode="numeric"></label>
 <label class="chk"><input id="sh" type="checkbox">Shuffle</label>
+<label class="chk"><input id="rn" type="checkbox">Start songs at a random position</label>
 </section>
 <section>
 <div class="lh"><h2>Songs <span id="cnt"></span></h2><label class="add">Add songs<input id="fi" type="file" multiple accept="audio/*,.mp3,.m4a,.aac,.wav,.flac"></label></div>
@@ -62,14 +63,15 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <script>
 const $=s=>document.querySelector(s),L=[],D=[];
 let ctx,cur=0,idx=-1,playing=false,started=false,mixing=false,el=0,last=0,silent;
-const cfg={i:60,f:5,sh:false};
+const cfg={i:60,f:5,sh:false,rn:false};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('am')||'{}'))}catch(_){}
 const sv=()=>{try{localStorage.setItem('am',JSON.stringify(cfg))}catch(_){}};
-$('#iv').value=cfg.i;$('#fd').value=cfg.f;$('#sh').checked=cfg.sh;
+$('#iv').value=cfg.i;$('#fd').value=cfg.f;$('#sh').checked=cfg.sh;$('#rn').checked=cfg.rn;
 const cl=(v,a,b,d)=>isFinite(v)&&v>0?Math.min(b,Math.max(a,v)):d;
 $('#iv').onchange=e=>{cfg.i=cl(+e.target.value,10,600,60);e.target.value=cfg.i;sv()};
 $('#fd').onchange=e=>{cfg.f=cl(+e.target.value,1,30,5);e.target.value=cfg.f;sv()};
 $('#sh').onchange=e=>{cfg.sh=e.target.checked;sv()};
+$('#rn').onchange=e=>{cfg.rn=e.target.checked;sv()};
 const fmt=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
 const F=()=>Math.min(cfg.f,cfg.i/2);
 function silentWav(){const n=8000,b=new ArrayBuffer(44+n*2),v=new DataView(b),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
@@ -87,8 +89,9 @@ function fade(g,to,s){const t=ctx.currentTime;g.gain.cancelScheduledValues(t);g.
 function load(d,i){if(d.url)URL.revokeObjectURL(d.url);d.url=URL.createObjectURL(L[i].file);d.e.src=d.url;d.name=L[i].name}
 function next(){if(cfg.sh&&L.length>1){let r;do r=Math.random()*L.length|0;while(r===idx);return r}return(idx+1)%L.length}
 function meta(){if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:D[cur].name,artist:'Automixer'})}
-function go(i){init();ctx.resume();const d=D[cur],o=D[1-cur];o.e.pause();setg(o.g,0);load(d,i);idx=i;d.e.currentTime=0;setg(d.g,0);d.e.play().catch(()=>{});fade(d.g,1,1.5);silent.play().catch(()=>{});playing=started=true;mixing=false;el=0;last=performance.now();meta();ui()}
-function mix(n){if(mixing||!L.length)return;mixing=true;const f=F(),o=D[cur],d=D[1-cur];idx=n!=null?n:next();load(d,idx);d.e.currentTime=0;d.e.play().catch(()=>{});fade(d.g,1,f);fade(o.g,0,f);cur=1-cur;el=0;meta();ui();setTimeout(()=>{o.e.pause();mixing=false},f*1000+150)}
+function rnd(d){if(!cfg.rn)return;const s=()=>{const r=d.e.duration-cfg.i-F();if(isFinite(r)&&r>0)d.e.currentTime=Math.random()*r};d.e.readyState>=1?s():d.e.addEventListener('loadedmetadata',s,{once:true})}
+function go(i){init();ctx.resume();const d=D[cur],o=D[1-cur];o.e.pause();setg(o.g,0);load(d,i);idx=i;d.e.currentTime=0;setg(d.g,0);d.e.play().catch(()=>{});rnd(d);fade(d.g,1,1.5);silent.play().catch(()=>{});playing=started=true;mixing=false;el=0;last=performance.now();meta();ui()}
+function mix(n){if(mixing||!L.length)return;mixing=true;const f=F(),o=D[cur],d=D[1-cur];idx=n!=null?n:next();load(d,idx);d.e.currentTime=0;d.e.play().catch(()=>{});rnd(d);fade(d.g,1,f);fade(o.g,0,f);cur=1-cur;el=0;meta();ui();setTimeout(()=>{o.e.pause();mixing=false},f*1000+150)}
 $('#pp').onclick=()=>{if(!L.length)return $('#fi').click();init();ctx.resume();
 if(playing){playing=false;D.forEach(d=>d.e.pause());silent.pause()}
 else if(started){playing=true;last=performance.now();mixing=false;setg(D[1-cur].g,0);setg(D[cur].g,1);D[cur].e.play().catch(()=>{});silent.play().catch(()=>{})}
