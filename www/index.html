@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Automixer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#E3E8EC">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Automixer">
+<style>
+:root{--bg:#E3E8EC;--panel:#F7F9FA;--ink:#17232E;--mut:#5B6B78;--a:#2E6BE6;--b:#E5902A;--line:#C9D2D9}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 ui-rounded,"SF Pro Rounded",system-ui,sans-serif}
+main{max-width:480px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom))}
+h1{margin:0;font-size:34px;font-weight:800;letter-spacing:-.03em}
+h2{margin:0;font-size:19px}
+#st{margin:2px 0 18px;color:var(--mut)}
+.deck{display:grid;grid-template-columns:46px 1fr;gap:12px;align-items:center;background:var(--panel);border-radius:16px;padding:12px;margin-bottom:10px;border:2px solid transparent}
+.deck.on{border-color:var(--ink)}
+.k{width:46px;height:46px;border-radius:10px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px}
+#d0 .k,#f0{background:var(--a)}#d1 .k,#f1{background:var(--b)}
+.t b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px}
+.bar{display:block;height:10px;border-radius:5px;background:var(--line);overflow:hidden}
+.bar u{display:block;height:100%;width:0}
+.next{margin:14px 0;color:var(--mut)}.next b{color:var(--ink);font-variant-numeric:tabular-nums}
+.ctl{display:flex;gap:10px;margin-bottom:22px}
+button,.add{font:inherit;border:0;cursor:pointer}
+.ctl button{flex:1;height:54px;border-radius:999px;background:var(--panel);color:var(--ink);font-weight:700;font-size:17px}
+.ctl .main{flex:2;background:var(--ink);color:#fff}
+.set{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
+.set label{display:flex;flex-direction:column;gap:4px;color:var(--mut);font-size:14px}
+.set input[type=number]{font:inherit;height:44px;border-radius:10px;border:1px solid var(--line);padding:0 10px;background:var(--panel);color:var(--ink)}
+.set .chk{flex-direction:row;align-items:center;gap:8px;grid-column:1/-1;font-size:16px;color:var(--ink)}
+.lh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.add{background:var(--a);color:#fff;font-weight:700;padding:10px 16px;border-radius:999px}
+.add input{display:none}
+ol{list-style:none;margin:0;padding:0}
+li{display:flex;background:var(--panel);border-radius:10px;margin-bottom:6px;overflow:hidden}
+li.on{box-shadow:inset 4px 0 0 var(--ink)}
+li button{background:none;color:var(--ink);text-align:left;padding:12px 14px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+li .x{flex:none;width:48px;color:var(--mut);font-size:20px;padding:0}
+.note{color:var(--mut);font-size:14px}
+button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);outline-offset:2px}
+</style></head><body><main>
+<h1>Automixer</h1><p id="st">Add songs to begin</p>
+<section>
+<div class="deck" id="d0"><span class="k">A</span><div class="t"><b id="t0">Empty</b><i class="bar"><u id="f0"></u></i></div></div>
+<div class="deck" id="d1"><span class="k">B</span><div class="t"><b id="t1">Empty</b><i class="bar"><u id="f1"></u></i></div></div>
+</section>
+<p class="next">Next mix in <b id="cd">–</b></p>
+<div class="ctl"><button id="pp" class="main">Add songs</button><button id="sk">Skip</button></div>
+<section class="set">
+<label>Switch songs every (seconds)<input id="iv" type="number" min="10" max="600" inputmode="numeric"></label>
+<label>Fade length (seconds)<input id="fd" type="number" min="1" max="30" inputmode="numeric"></label>
+<label class="chk"><input id="sh" type="checkbox">Shuffle</label>
+<label class="chk"><input id="rn" type="checkbox">Start songs at a random position</label>
+</section>
+<section>
+<div class="lh"><h2>Songs <span id="cnt"></span></h2><label class="add">Add songs<input id="fi" type="file" multiple accept="audio/*,.mp3,.m4a,.aac,.wav,.flac"></label></div>
+<ol id="ls"></ol>
+<p class="note">Your song list is cleared when the app closes. Add songs again next time.</p>
+</section></main>
+<script>
+const $=s=>document.querySelector(s),L=[],D=[];
+let ctx,cur=0,idx=-1,playing=false,started=false,mixing=false,el=0,last=0,silent;
+const cfg={i:60,f:5,sh:false,rn:false};
+try{Object.assign(cfg,JSON.parse(localStorage.getItem('am')||'{}'))}catch(_){}
+const sv=()=>{try{localStorage.setItem('am',JSON.stringify(cfg))}catch(_){}};
+$('#iv').value=cfg.i;$('#fd').value=cfg.f;$('#sh').checked=cfg.sh;$('#rn').checked=cfg.rn;
+const cl=(v,a,b,d)=>isFinite(v)&&v>0?Math.min(b,Math.max(a,v)):d;
+$('#iv').onchange=e=>{cfg.i=cl(+e.target.value,10,600,60);e.target.value=cfg.i;sv()};
+$('#fd').onchange=e=>{cfg.f=cl(+e.target.value,1,30,5);e.target.value=cfg.f;sv()};
+$('#sh').onchange=e=>{cfg.sh=e.target.checked;sv()};
+$('#rn').onchange=e=>{cfg.rn=e.target.checked;sv()};
+const fmt=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+const F=()=>Math.min(cfg.f,cfg.i/2);
+function silentWav(){const n=8000,b=new ArrayBuffer(44+n*2),v=new DataView(b),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);v.setUint32(28,16000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+return URL.createObjectURL(new Blob([b],{type:'audio/wav'}))}
+function init(){if(ctx)return;ctx=new(window.AudioContext||window.webkitAudioContext)();
+for(let k=0;k<2;k++){const e=new Audio();e.preload='auto';e.setAttribute('playsinline','');const g=ctx.createGain();g.gain.value=0;
+ctx.createMediaElementSource(e).connect(g).connect(ctx.destination);
+e.onended=()=>{if(playing&&!mixing&&D[cur].e===e)mix()};D.push({e,g,name:'Empty',url:null})}
+silent=new Audio(silentWav());silent.loop=true;
+try{navigator.audioSession.type='playback'}catch(_){}
+if('mediaSession' in navigator){const m=navigator.mediaSession;m.setActionHandler('play',()=>$('#pp').click());m.setActionHandler('pause',()=>$('#pp').click());m.setActionHandler('nexttrack',()=>$('#sk').click())}}
+const setg=(g,v)=>{g.gain.cancelScheduledValues(0);g.gain.setValueAtTime(v,ctx.currentTime)};
+function fade(g,to,s){const t=ctx.currentTime;g.gain.cancelScheduledValues(t);g.gain.setValueAtTime(g.gain.value,t);g.gain.linearRampToValueAtTime(to,t+s)}
+function load(d,i){if(d.url)URL.revokeObjectURL(d.url);d.url=URL.createObjectURL(L[i].file);d.e.src=d.url;d.name=L[i].name}
+function next(){if(cfg.sh&&L.length>1){let r;do r=Math.random()*L.length|0;while(r===idx);return r}return(idx+1)%L.length}
+function meta(){if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:D[cur].name,artist:'Automixer'})}
+function rnd(d){if(!cfg.rn)return;const s=()=>{const r=d.e.duration-cfg.i-F();if(isFinite(r)&&r>0)d.e.currentTime=Math.random()*r};d.e.readyState>=1?s():d.e.addEventListener('loadedmetadata',s,{once:true})}
+function go(i){init();ctx.resume();const d=D[cur],o=D[1-cur];o.e.pause();setg(o.g,0);load(d,i);idx=i;d.e.currentTime=0;setg(d.g,0);d.e.play().catch(()=>{});rnd(d);fade(d.g,1,1.5);silent.play().catch(()=>{});playing=started=true;mixing=false;el=0;last=performance.now();meta();ui()}
+function mix(n){if(mixing||!L.length)return;mixing=true;const f=F(),o=D[cur],d=D[1-cur];idx=n!=null?n:next();load(d,idx);d.e.currentTime=0;d.e.play().catch(()=>{});rnd(d);fade(d.g,1,f);fade(o.g,0,f);cur=1-cur;el=0;meta();ui();setTimeout(()=>{o.e.pause();mixing=false},f*1000+150)}
+$('#pp').onclick=()=>{if(!L.length)return $('#fi').click();init();ctx.resume();
+if(playing){playing=false;D.forEach(d=>d.e.pause());silent.pause()}
+else if(started){playing=true;last=performance.now();mixing=false;setg(D[1-cur].g,0);setg(D[cur].g,1);D[cur].e.play().catch(()=>{});silent.play().catch(()=>{})}
+else go(idx<0?0:idx);ui()};
+$('#sk').onclick=()=>{if(playing)mix()};
+$('#fi').onchange=e=>{for(const f of e.target.files)L.push({file:f,name:f.name.replace(/\.[^.]+$/,'')});e.target.value='';ui()};
+function ui(){$('#cnt').textContent=L.length?'('+L.length+')':'';const ol=$('#ls');ol.innerHTML='';
+L.forEach((s,i)=>{const li=document.createElement('li'),b=document.createElement('button'),x=document.createElement('button');li.className=i===idx?'on':'';b.textContent=s.name;b.onclick=()=>playing?mix(i):go(i);x.className='x';x.textContent='×';x.setAttribute('aria-label','Remove '+s.name);x.onclick=()=>{L.splice(i,1);if(i<idx)idx--;else if(i===idx)idx=-1;ui()};li.append(b,x);ol.append(li)});
+for(let k=0;k<2;k++){if(D[k])$('#t'+k).textContent=D[k].name;$('#d'+k).classList.toggle('on',playing&&cur===k)}
+$('#pp').textContent=!L.length?'Add songs':playing?'Pause':'Play';
+$('#st').textContent=!L.length?'Add songs to begin':playing?'Mixing every '+fmt(cfg.i):started?'Paused':'Ready'}
+setInterval(()=>{if(!playing)return;const t=performance.now();el+=(t-last)/1000;last=t;const e=D[cur].e,rem=isFinite(e.duration)?e.duration-e.currentTime-F():1e9,left=Math.min(cfg.i-el,rem);
+if(!mixing&&left<=0)mix();$('#cd').textContent=fmt(left)},250);
+(function raf(){if(D.length){$('#f0').style.width=D[0].g.gain.value*100+'%';$('#f1').style.width=D[1].g.gain.value*100+'%'}requestAnimationFrame(raf)})();
+document.addEventListener('visibilitychange',()=>{if(ctx&&playing&&ctx.state!=='running')ctx.resume()});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+ui();
+</script></body></html>
