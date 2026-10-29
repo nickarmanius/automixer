@@ -65,6 +65,8 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <script>
 const $=s=>document.querySelector(s),L=[],D=[];
 let ctx,cur=0,idx=-1,playing=false,started=false,mixing=false,el=0,last=0,silent;
+const NATIVE=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
+window.amRemote=c=>{if(!L.length)return;if(c==='play'){if(!playing)$('#pp').click()}else if(c==='pause'){if(playing)$('#pp').click()}else if(c==='next'){$('#sk').click()}};
 const cfg={i:60,f:5,sh:false,rn:false};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('am')||'{}'))}catch(_){}
 const sv=()=>{try{localStorage.setItem('am',JSON.stringify(cfg))}catch(_){}};
@@ -85,7 +87,7 @@ ctx.createMediaElementSource(e).connect(g).connect(ctx.destination);
 e.onended=()=>{if(playing&&!mixing&&D[cur].e===e)mix()};D.push({e,g,name:'Empty',url:null})}
 silent=new Audio(silentWav());silent.loop=true;
 try{navigator.audioSession.type='playback'}catch(_){}
-if('mediaSession' in navigator){const m=navigator.mediaSession;m.setActionHandler('play',()=>$('#pp').click());m.setActionHandler('pause',()=>$('#pp').click());m.setActionHandler('nexttrack',()=>$('#sk').click())}}
+if('mediaSession' in navigator){const m=navigator.mediaSession;m.setActionHandler('play',()=>window.amRemote('play'));m.setActionHandler('pause',()=>window.amRemote('pause'));m.setActionHandler('nexttrack',()=>window.amRemote('next'))}}
 const setg=(g,v)=>{g.gain.cancelScheduledValues(0);g.gain.setValueAtTime(v,ctx.currentTime)};
 function fade(g,to,s){const t=ctx.currentTime;g.gain.cancelScheduledValues(t);g.gain.setValueAtTime(g.gain.value,t);g.gain.linearRampToValueAtTime(to,t+s)}
 function load(d,i){if(d.url)URL.revokeObjectURL(d.url);d.url=URL.createObjectURL(L[i].file);d.e.src=d.url;d.name=L[i].name}
@@ -106,7 +108,8 @@ else if(started){playing=true;last=performance.now();mixing=false;setg(D[1-cur].
 else go(idx<0?0:idx);ui()};
 $('#sk').onclick=()=>{if(playing)mix()};
 $('#fi').onchange=e=>{for(const f of e.target.files){const s={file:f,name:f.name.replace(/\.[^.]+$/,'')};L.push(s);if(cfg.sh&&bag.length)bag.splice(Math.random()*(bag.length+1)|0,0,s)}e.target.value='';ui()};
-function ps(){if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':started?'paused':'none'}
+function ps(){if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':started?'paused':'none';
+if(NATIVE)document.title='AM|'+(playing?'1':started?'0':'x')+'|'+encodeURIComponent(started&&D[cur]?D[cur].name:'')+'|'+encodeURIComponent('Automixer')}
 function ui(){$('#cnt').textContent=L.length?'('+L.length+')':'';const ol=$('#ls');ol.innerHTML='';
 L.forEach((s,i)=>{const li=document.createElement('li'),b=document.createElement('button'),x=document.createElement('button');li.className=i===idx?'on':'';b.textContent=s.name;b.onclick=()=>playing?mix(i):go(i);x.className='x';x.textContent='×';x.setAttribute('aria-label','Remove '+s.name);x.onclick=()=>{L.splice(i,1);if(i<idx)idx--;else if(i===idx)idx=-1;ui()};li.append(b,x);ol.append(li)});
 for(let k=0;k<2;k++){if(D[k])$('#t'+k).textContent=D[k].name;$('#d'+k).classList.toggle('on',playing&&cur===k)}
