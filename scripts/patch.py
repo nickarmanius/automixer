@@ -28,6 +28,8 @@ final class NowPlayingBridge: NSObject {
     private var title = ""
     private var artist = ""
     private var state = "x"
+    private var fixes = 0
+    private var pubCount = 0
 
     func start() {
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -63,20 +65,36 @@ final class NowPlayingBridge: NSObject {
     }
 
     private func publish() {
+        let session = AVAudioSession.sharedInstance()
+        // WebKit may switch the audio session to a mixing mode, which keeps the app out of Now Playing.
+        // While something is playing or paused, put it back to plain playback.
+        if state != "x" && (session.category != .playback || session.categoryOptions.contains(.mixWithOthers)) {
+            fixes += 1
+            try? session.setCategory(.playback, mode: .default, options: [])
+            try? session.setActive(true)
+        }
+        pubCount += 1
         let center = MPNowPlayingInfoCenter.default()
         if state == "x" {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
-            return
+        } else {
+            let playing = state == "1"
+            let info: [String: Any] = [
+                MPMediaItemPropertyTitle: title,
+                MPMediaItemPropertyArtist: artist,
+                MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0
+            ]
+            center.nowPlayingInfo = info
+            center.playbackState = playing ? .playing : .paused
         }
-        let playing = state == "1"
-        let info: [String: Any] = [
-            MPMediaItemPropertyTitle: title,
-            MPMediaItemPropertyArtist: artist,
-            MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0
-        ]
-        center.nowPlayingInfo = info
-        center.playbackState = playing ? .playing : .paused
+        sendDebug(session)
+    }
+
+    private func sendDebug(_ session: AVAudioSession) {
+        let cat = session.category.rawValue.replacingOccurrences(of: "AVAudioSessionCategory", with: "")
+        let text = "cat=\(cat) opt=\(session.categoryOptions.rawValue) fix=\(fixes) pub=\(pubCount) st=\(state)"
+        webView?.evaluateJavaScript("window.amDebug && window.amDebug('\(text)')", completionHandler: nil)
     }
 
     private func setupCommands() {
