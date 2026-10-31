@@ -30,6 +30,8 @@ final class NowPlayingBridge: NSObject {
     private var state = "x"
     private var fixes = 0
     private var pubCount = 0
+    private var elapsed = 0.0
+    private var lastPub = Date()
 
     func start() {
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -57,7 +59,9 @@ final class NowPlayingBridge: NSObject {
         let parts = raw.components(separatedBy: "|")
         guard parts.count >= 4, parts[0] == "AM" else { return }
         state = parts[1]
-        title = parts[2].removingPercentEncoding ?? ""
+        let newTitle = parts[2].removingPercentEncoding ?? ""
+        if newTitle != title { elapsed = 0 }
+        title = newTitle
         artist = parts[3].removingPercentEncoding ?? ""
         DispatchQueue.main.async { [weak self] in
             self?.publish()
@@ -74,6 +78,9 @@ final class NowPlayingBridge: NSObject {
             try? session.setActive(true)
         }
         pubCount += 1
+        let nowDate = Date()
+        if state == "1" { elapsed += nowDate.timeIntervalSince(lastPub) }
+        lastPub = nowDate
         let center = MPNowPlayingInfoCenter.default()
         if state == "x" {
             center.nowPlayingInfo = nil
@@ -83,7 +90,11 @@ final class NowPlayingBridge: NSObject {
             let info: [String: Any] = [
                 MPMediaItemPropertyTitle: title,
                 MPMediaItemPropertyArtist: artist,
-                MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0
+                MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
+                MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+                MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+                MPNowPlayingInfoPropertyIsLiveStream: true,
+                MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed
             ]
             center.nowPlayingInfo = info
             center.playbackState = playing ? .playing : .paused
