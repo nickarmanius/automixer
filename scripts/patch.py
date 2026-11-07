@@ -33,6 +33,7 @@ final class NowPlayingBridge: NSObject {
     private var elapsed = 0.0
     private var lastPub = Date()
     private var keeper: AVAudioPlayer?
+    private var keeperWanted = true
 
     func start() {
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -41,12 +42,12 @@ final class NowPlayingBridge: NSObject {
             if let v = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                AVAudioSession.InterruptionType(rawValue: v) == .ended {
                 try? AVAudioSession.sharedInstance().setActive(true)
-                self?.keeper?.play()
+                if self?.keeperWanted == true { self?.keeper?.play() }
             }
         }
         Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if let k = self.keeper, !k.isPlaying { k.play() }
+            if let k = self.keeper { if self.keeperWanted && !k.isPlaying { k.play() } else if !self.keeperWanted && k.isPlaying { k.stop() } }
             if self.webView == nil {
                 self.attach()
             } else {
@@ -87,6 +88,8 @@ final class NowPlayingBridge: NSObject {
         let parts = raw.components(separatedBy: "|")
         guard parts.count >= 4, parts[0] == "AM" else { return }
         state = parts[1]
+        keeperWanted = (state != "1")
+        if state == "1" { keeper?.stop() } else if let k = keeper, !k.isPlaying { k.play() }
         let newTitle = parts[2].removingPercentEncoding ?? ""
         if newTitle != title { elapsed = 0 }
         title = newTitle
