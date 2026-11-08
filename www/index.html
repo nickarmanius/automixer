@@ -67,8 +67,9 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <script>
 const $=s=>document.querySelector(s);
 const fmt=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
-const has=()=>!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.am);
-const post=m=>{try{window.webkit.messageHandlers.am.postMessage(m)}catch(e){$('#dbg').textContent='Native player not ready: '+e}};
+const q=[];let n=0,busy=false;
+const post=m=>{q.push(m);if(!busy){busy=true;pump()}};
+function pump(){const m=q.shift();if(!m){busy=false;return}document.title='AMC|'+Date.now().toString(36)+(++n)+'|'+m.cmd+'|'+(m.i==null?-1:m.i);setTimeout(pump,200)}
 let S={songs:[],idx:-1,playing:false,started:false,pos:0,dur:0,err:''},sig='',ready=false,tries=0;
 function list(){const ol=$('#ls');ol.innerHTML='';$('#cnt').textContent=S.songs.length?'('+S.songs.length+')':'';
 S.songs.forEach((name,i)=>{const li=document.createElement('li'),b=document.createElement('button'),x=document.createElement('button');
@@ -86,7 +87,7 @@ window.amState=s=>{S=s;const k=s.songs.join('\n')+'|'+s.idx+'|'+s.playing+'|'+s.
 $('#pp').onclick=()=>{if(!S.songs.length)post({cmd:'pick'});else post({cmd:'toggle'})};
 $('#sk').onclick=()=>post({cmd:'next'});
 $('#addb').onclick=()=>post({cmd:'pick'});
-const poll=setInterval(()=>{if(has()){clearInterval(poll);ready=true;post({cmd:'hello'})}
-else if(++tries>16){clearInterval(poll);$('#dbg').textContent='Native player not available. Is this the native build?'}},500);
+let got=false;const _as=window.amState;window.amState=s=>{got=true;_as(s)};
+const poll=setInterval(()=>{if(got){clearInterval(poll);return}post({cmd:'hello'});if(++tries>16){clearInterval(poll);$('#dbg').textContent='Native player not connected. Is this the native build?'}},500);
 list();tick();
 </script></body></html>
