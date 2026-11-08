@@ -73,6 +73,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     }
 
     func start() {
+        try? FileManager.default.removeItem(at: songsDir())
         UIApplication.shared.beginReceivingRemoteControlEvents()
         setupCommands()
         NotificationCenter.default.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: nil)
@@ -140,17 +141,44 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         topController()?.present(picker, animated: true, completion: nil)
     }
 
+    private func songsDir() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let d = base.appendingPathComponent("songs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.none])
+        return d
+    }
+
+    // Copies every picked song into the app's own folder, written without file protection,
+    // so the files can still be read while the phone is locked.
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        for u in urls {
-            // Make the file readable while the phone is locked.
-            try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.none], ofItemAtPath: u.path)
-            songs.append((name: u.deletingPathExtension().lastPathComponent, url: u))
-        }
-        if let f = urls.first, let a = try? FileManager.default.attributesOfItem(atPath: f.path),
-           let k = a[.protectionKey] as? FileProtectionType {
-            note("prot=" + k.rawValue)
-        }
+        note("copying " + String(urls.count) + " songs")
         pushState()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let dir = self.songsDir()
+            var added: [(name: String, url: URL)] = []
+            var failed: [String] = []
+            for u in urls {
+                let name = u.deletingPathExtension().lastPathComponent
+                let dest = dir.appendingPathComponent(UUID().uuidString + "." + u.pathExtension)
+                do {
+                    let data = try Data(contentsOf: u)
+                    try data.write(to: dest, options: [.noFileProtection])
+                    added.append((name: name, url: dest))
+                    try? FileManager.default.removeItem(at: u)
+                } catch {
+                    failed.append(name)
+                }
+            }
+            let addedFinal = added
+            let failedFinal = failed
+            DispatchQueue.main.async {
+                self.songs.append(contentsOf: addedFinal)
+                for f in failedFinal { self.note("copy failed " + f) }
+                self.note("added " + String(addedFinal.count) + " songs")
+                self.pushState()
+            }
+        }
     }
 
     private func play(at i: Int, step: Int = 1, tries: Int = 0) {
@@ -183,7 +211,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             // This song cannot be opened: remember its name and try the next one.
             let bad = songs[i].name
             lastError = "Cannot play: " + bad
-            note("skipped " + bad)
+            note("skipped " + bad + " exists=" + String(FileManager.default.fileExists(atPath: songs[i].url.path)))
             if tries < songs.count - 1 {
                 play(at: (i + step + songs.count) % songs.count, step: step, tries: tries + 1)
                 return
