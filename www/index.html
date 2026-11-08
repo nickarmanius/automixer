@@ -62,7 +62,7 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <div class="lh"><h2>Songs <span id="cnt"></span></h2><button class="add" id="addb">Add songs</button></div>
 <ol id="ls"></ol>
 <p class="note">Your song list is cleared when the app closes. Add songs again next time.</p>
-<p class="note" id="dbg" style="font-size:11px;word-break:break-all"></p>
+<p class="note" id="dbg" style="font-size:12px;word-break:break-all;white-space:pre-wrap"></p>
 </section></main>
 <script>
 const $=s=>document.querySelector(s);
@@ -82,7 +82,7 @@ $('#d0').classList.toggle('on',S.playing);
 $('#cd').textContent=S.started?fmt(S.dur-S.pos):'\u2013';
 $('#pp').textContent=!n?'Add songs':S.playing?'Pause':'Play';
 $('#st').textContent=!n?'Add songs to begin':S.playing?'Playing':S.started?'Paused':'Ready';
-$('#dbg').textContent=S.err?'Error: '+S.err:''}
+$('#dbg').textContent=(S.err?'Error: '+S.err+' ':'')+(S.log||'')}
 window.amState=s=>{S=s;const k=s.songs.join('\n')+'|'+s.idx+'|'+s.playing+'|'+s.started+'|'+s.err;if(k!==sig){sig=k;list()}tick()};
 $('#pp').onclick=()=>{if(!S.songs.length)post({cmd:'pick'});else post({cmd:'toggle'})};
 $('#sk').onclick=()=>post({cmd:'next'});
