@@ -32,46 +32,17 @@ final class NowPlayingBridge: NSObject {
     private var pubCount = 0
     private var elapsed = 0.0
     private var lastPub = Date()
-    private var keeper: AVAudioPlayer?
-    private var keeperWanted = true
 
     func start() {
         UIApplication.shared.beginReceivingRemoteControlEvents()
-        startKeeper()
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
-            if let v = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-               AVAudioSession.InterruptionType(rawValue: v) == .ended {
-                try? AVAudioSession.sharedInstance().setActive(true)
-                if self?.keeperWanted == true { self?.keeper?.play() }
-            }
-        }
         Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if let k = self.keeper { if self.keeperWanted && !k.isPlaying { k.play() } else if !self.keeperWanted && k.isPlaying { k.stop() } }
             if self.webView == nil {
                 self.attach()
             } else {
                 self.publish()
             }
         }
-    }
-
-    private func startKeeper() {
-        guard keeper == nil else { return }
-        let n = 16000
-        var d = Data()
-        func u32(_ v: UInt32) { var x = v.littleEndian; d.append(Data(bytes: &x, count: 4)) }
-        func u16(_ v: UInt16) { var x = v.littleEndian; d.append(Data(bytes: &x, count: 2)) }
-        d.append("RIFF".data(using: .ascii)!); u32(UInt32(36 + n * 2))
-        d.append("WAVEfmt ".data(using: .ascii)!); u32(16); u16(1); u16(1); u32(8000); u32(16000); u16(2); u16(16)
-        d.append("data".data(using: .ascii)!); u32(UInt32(n * 2))
-        d.append(Data(count: n * 2))
-        guard let p = try? AVAudioPlayer(data: d) else { return }
-        p.numberOfLoops = -1
-        p.volume = 1.0
-        p.prepareToPlay()
-        p.play()
-        keeper = p
     }
 
     private func attach() {
@@ -88,8 +59,6 @@ final class NowPlayingBridge: NSObject {
         let parts = raw.components(separatedBy: "|")
         guard parts.count >= 4, parts[0] == "AM" else { return }
         state = parts[1]
-        keeperWanted = (state != "1")
-        if state == "1" { keeper?.stop() } else if let k = keeper, !k.isPlaying { k.play() }
         let newTitle = parts[2].removingPercentEncoding ?? ""
         if newTitle != title { elapsed = 0 }
         title = newTitle
@@ -135,7 +104,7 @@ final class NowPlayingBridge: NSObject {
 
     private func sendDebug(_ session: AVAudioSession) {
         let cat = session.category.rawValue.replacingOccurrences(of: "AVAudioSessionCategory", with: "")
-        let text = "cat=\(cat) opt=\(session.categoryOptions.rawValue) fix=\(fixes) pub=\(pubCount) st=\(state) kp=\(keeper?.isPlaying == true ? 1 : 0)"
+        let text = "cat=\(cat) opt=\(session.categoryOptions.rawValue) fix=\(fixes) pub=\(pubCount) st=\(state)"
         webView?.evaluateJavaScript("window.amDebug && window.amDebug('\(text)')", completionHandler: nil)
     }
 
