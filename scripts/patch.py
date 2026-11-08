@@ -37,9 +37,15 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     private var ended = false
     private var log: [String] = []
 
+    private let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
     private func note(_ s: String) {
-        log.append(s)
-        if log.count > 6 { log.removeFirst() }
+        log.append(clock.string(from: Date()) + " " + s)
+        if log.count > 10 { log.removeFirst() }
     }
 
     // Reads the whole song into memory, so that the file is not needed again while the phone is locked.
@@ -70,6 +76,16 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         UIApplication.shared.beginReceivingRemoteControlEvents()
         setupCommands()
         NotificationCenter.default.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: nil)
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.note("background")
+        }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.note("foreground")
+        }
+        nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.note("MEDIA SERVICES RESET")
+        }
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if !self.attached {
@@ -137,7 +153,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         pushState()
     }
 
-    private func play(at i: Int) {
+    private func play(at i: Int, step: Int = 1, tries: Int = 0) {
         guard i >= 0 && i < songs.count else { return }
         var chosen: AVAudioPlayer? = nil
         if i == nextIndex, let pre = nextPlayer { chosen = pre }
@@ -156,12 +172,22 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
                 started = true
                 ended = false
                 lastError = ""
-                let ok = np.play()
+                var ok = np.play()
+                if !ok {
+                    try? session.setActive(true)
+                    ok = np.play()
+                }
                 note("play \(i) ok=\(ok)")
             }
         } catch {
-            lastError = error.localizedDescription
-            note("play \(i) fail " + error.localizedDescription)
+            // This song cannot be opened: remember its name and try the next one.
+            let bad = songs[i].name
+            lastError = "Cannot play: " + bad
+            note("skipped " + bad)
+            if tries < songs.count - 1 {
+                play(at: (i + step + songs.count) % songs.count, step: step, tries: tries + 1)
+                return
+            }
         }
         prepareNext()
         updateNowPlaying()
@@ -208,7 +234,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             pushState()
             return
         }
-        play(at: (index - 1 + songs.count) % songs.count)
+        play(at: (index - 1 + songs.count) % songs.count, step: -1)
     }
 
     private func next() {
@@ -251,6 +277,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         let opts = n.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.note(type == .began ? "interruption began" : "interruption ended")
             if type == .began {
                 self.updateNowPlaying()
                 self.pushState()
@@ -290,23 +317,23 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         c.nextTrackCommand.isEnabled = true
         c.previousTrackCommand.isEnabled = true
         c.playCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
-            DispatchQueue.main.async { self?.resume() }
+            DispatchQueue.main.async { self?.note("rc play"); self?.resume() }
             return .success
         }
         c.pauseCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
-            DispatchQueue.main.async { self?.pause() }
+            DispatchQueue.main.async { self?.note("rc pause"); self?.pause() }
             return .success
         }
         c.togglePlayPauseCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
-            DispatchQueue.main.async { self?.toggle() }
+            DispatchQueue.main.async { self?.note("rc toggle"); self?.toggle() }
             return .success
         }
         c.previousTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
-            DispatchQueue.main.async { self?.previous() }
+            DispatchQueue.main.async { self?.note("rc prev"); self?.previous() }
             return .success
         }
         c.nextTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
-            DispatchQueue.main.async { self?.next() }
+            DispatchQueue.main.async { self?.note("rc next"); self?.next() }
             return .success
         }
     }
@@ -321,7 +348,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             "pos": player?.currentTime ?? 0.0,
             "dur": player?.duration ?? 0.0,
             "err": lastError,
-            "log": log.joined(separator: " | ")
+            "log": log.joined(separator: "\n")
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: d),
               let json = String(data: data, encoding: .utf8) else { return }
