@@ -32,6 +32,39 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     private var observation: NSKeyValueObservation?
     private var lastSeq = ""
     private var lastError = ""
+    private var nextPlayer: AVAudioPlayer?
+    private var nextIndex = -1
+    private var ended = false
+    private var log: [String] = []
+
+    private func note(_ s: String) {
+        log.append(s)
+        if log.count > 6 { log.removeFirst() }
+    }
+
+    // Reads the whole song into memory, so that the file is not needed again while the phone is locked.
+    private func makePlayer(_ url: URL) throws -> AVAudioPlayer {
+        if let data = try? Data(contentsOf: url), let p = try? AVAudioPlayer(data: data) {
+            return p
+        }
+        return try AVAudioPlayer(contentsOf: url)
+    }
+
+    // Opens the next song ahead of time, so that nothing has to be read from disk when the screen is locked.
+    private func prepareNext() {
+        nextPlayer = nil
+        nextIndex = -1
+        guard songs.count > 0, index >= 0 else { return }
+        let n = (index + 1) % songs.count
+        do {
+            let np = try makePlayer(songs[n].url)
+            np.prepareToPlay()
+            nextPlayer = np
+            nextIndex = n
+        } catch {
+            note("prep fail " + error.localizedDescription)
+        }
+    }
 
     func start() {
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -93,29 +126,44 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         for u in urls {
+            // Make the file readable while the phone is locked.
+            try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.none], ofItemAtPath: u.path)
             songs.append((name: u.deletingPathExtension().lastPathComponent, url: u))
+        }
+        if let f = urls.first, let a = try? FileManager.default.attributesOfItem(atPath: f.path),
+           let k = a[.protectionKey] as? FileProtectionType {
+            note("prot=" + k.rawValue)
         }
         pushState()
     }
 
     private func play(at i: Int) {
         guard i >= 0 && i < songs.count else { return }
+        var chosen: AVAudioPlayer? = nil
+        if i == nextIndex, let pre = nextPlayer { chosen = pre }
+        nextPlayer = nil
+        nextIndex = -1
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [])
+        try? session.setActive(true)
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [])
-            try session.setActive(true)
-            let p = try AVAudioPlayer(contentsOf: songs[i].url)
-            p.delegate = self
-            p.prepareToPlay()
-            player?.stop()
-            player = p
-            index = i
-            started = true
-            lastError = ""
-            _ = p.play()
+            if chosen == nil { chosen = try makePlayer(songs[i].url) }
+            if let np = chosen {
+                np.delegate = self
+                player?.stop()
+                player = np
+                index = i
+                started = true
+                ended = false
+                lastError = ""
+                let ok = np.play()
+                note("play \(i) ok=\(ok)")
+            }
         } catch {
             lastError = error.localizedDescription
+            note("play \(i) fail " + error.localizedDescription)
         }
+        prepareNext()
         updateNowPlaying()
         pushState()
     }
@@ -128,6 +176,10 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     }
 
     private func resume() {
+        if ended {
+            next()
+            return
+        }
         if let p = player, started {
             if !p.isPlaying {
                 try? AVAudioSession.sharedInstance().setActive(true)
@@ -148,6 +200,17 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         }
     }
 
+    private func previous() {
+        guard !songs.isEmpty else { return }
+        if let p = player, p.currentTime > 3 {
+            p.currentTime = 0
+            updateNowPlaying()
+            pushState()
+            return
+        }
+        play(at: (index - 1 + songs.count) % songs.count)
+    }
+
     private func next() {
         guard !songs.isEmpty else { return }
         play(at: (index + 1) % songs.count)
@@ -166,11 +229,19 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         }
         try? FileManager.default.removeItem(at: songs[i].url)
         songs.remove(at: i)
+        if started {
+            prepareNext()
+        } else {
+            nextPlayer = nil
+            nextIndex = -1
+        }
         pushState()
     }
 
     func audioPlayerDidFinishPlaying(_ finished: AVAudioPlayer, successfully flag: Bool) {
+        note("finished ok=\(flag)")
         guard finished === player, !songs.isEmpty else { return }
+        ended = true
         play(at: (index + 1) % songs.count)
     }
 
@@ -195,6 +266,9 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             center.nowPlayingInfo = nil
             return
         }
+        let rc = MPRemoteCommandCenter.shared()
+        rc.nextTrackCommand.isEnabled = true
+        rc.previousTrackCommand.isEnabled = true
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: songs[index].name,
             MPMediaItemPropertyArtist: "Automixer",
@@ -214,7 +288,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         c.pauseCommand.isEnabled = true
         c.togglePlayPauseCommand.isEnabled = true
         c.nextTrackCommand.isEnabled = true
-        c.previousTrackCommand.isEnabled = false
+        c.previousTrackCommand.isEnabled = true
         c.playCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
             DispatchQueue.main.async { self?.resume() }
             return .success
@@ -225,6 +299,10 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         }
         c.togglePlayPauseCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
             DispatchQueue.main.async { self?.toggle() }
+            return .success
+        }
+        c.previousTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            DispatchQueue.main.async { self?.previous() }
             return .success
         }
         c.nextTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
@@ -242,7 +320,8 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             "started": started,
             "pos": player?.currentTime ?? 0.0,
             "dur": player?.duration ?? 0.0,
-            "err": lastError
+            "err": lastError,
+            "log": log.joined(separator: " | ")
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: d),
               let json = String(data: data, encoding: .utf8) else { return }
