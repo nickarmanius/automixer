@@ -54,9 +54,9 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <section class="set">
 <label>Switch songs every (seconds)<input id="iv" type="number" inputmode="numeric" value="60"></label>
 <label>Fade length (seconds)<input id="fd" type="number" inputmode="numeric" value="5"></label>
-<label class="chk" style="opacity:.45"><input id="sh" type="checkbox" disabled style="opacity:.45">Shuffle</label>
-<label class="chk" style="opacity:.45"><input id="rn" type="checkbox" disabled>Start songs at a random position</label>
-<p class="note" style="grid-column:1/-1;margin:0">Stage 2: crossfade is on (interval at least 10 s, fade at most half of the interval). Shuffle and random start come in stage 3.</p>
+<label class="chk"><input id="sh" type="checkbox">Shuffle</label>
+<label class="chk"><input id="rn" type="checkbox">Start songs at a random position</label>
+<p class="note" style="grid-column:1/-1;margin:0">Interval is at least 10 s; the fade is at most half of the interval.</p>
 </section>
 <section>
 <div class="lh"><h2>Songs <span id="cnt"></span></h2><button class="add" id="addb">Add songs</button></div>
@@ -75,7 +75,7 @@ function list(){const ol=$('#ls');ol.innerHTML='';$('#cnt').textContent=S.songs.
 S.songs.forEach((name,i)=>{const li=document.createElement('li'),b=document.createElement('button'),x=document.createElement('button');
 li.className=i===S.idx?'on':'';b.textContent=name;b.onclick=()=>post({cmd:'play',i});
 x.className='x';x.textContent='\u00d7';x.setAttribute('aria-label','Remove '+name);x.onclick=()=>post({cmd:'remove',i});li.append(b,x);ol.append(li)})}
-function tick(){const n=S.songs.length,cur=S.idx>=0?S.songs[S.idx]:'Empty',nx=n>1&&S.idx>=0?S.songs[(S.idx+1)%n]:'Empty';
+function tick(){const n=S.songs.length,cur=S.idx>=0?S.songs[S.idx]:'Empty',nx=S.next||'Empty';
 $('#t0').textContent=cur;$('#t1').textContent=nx;
 $('#f0').style.width=(S.dur>0?S.pos/S.dur*100:0)+'%';$('#f1').style.width='0%';
 $('#d0').classList.toggle('on',S.playing);$('#d1').classList.toggle('on',!!S.fading);
@@ -87,9 +87,11 @@ window.amState=s=>{S=s;const k=s.songs.join('\n')+'|'+s.idx+'|'+s.playing+'|'+s.
 $('#pp').onclick=()=>{if(!S.songs.length)post({cmd:'pick'});else post({cmd:'toggle'})};
 $('#sk').onclick=()=>post({cmd:'next'});
 $('#addb').onclick=()=>post({cmd:'pick'});
-function sendCfg(){const iv=parseInt($('#iv').value),fd=parseInt($('#fd').value);if(iv>0&&fd>=0){post({cmd:'cfg',i:iv,j:fd});try{localStorage.setItem('am_cfg',JSON.stringify({iv,fd}))}catch(e){}}}
-try{const c=JSON.parse(localStorage.getItem('am_cfg')||'null');if(c&&c.iv>0&&c.fd>=0){$('#iv').value=c.iv;$('#fd').value=c.fd}}catch(e){}
+function save(){try{localStorage.setItem('am_cfg',JSON.stringify({iv:$('#iv').value,fd:$('#fd').value,sh:$('#sh').checked,rn:$('#rn').checked}))}catch(e){}}
+function sendCfg(){const iv=parseInt($('#iv').value),fd=parseInt($('#fd').value);if(iv>0&&fd>=0)post({cmd:'cfg',i:iv,j:fd});post({cmd:'opt',i:$('#sh').checked?1:0,j:$('#rn').checked?1:0});save()}
+try{const c=JSON.parse(localStorage.getItem('am_cfg')||'null');if(c){if(c.iv>0&&c.fd>=0){$('#iv').value=c.iv;$('#fd').value=c.fd}$('#sh').checked=!!c.sh;$('#rn').checked=!!c.rn}}catch(e){}
 let cfgT;['iv','fd'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearTimeout(cfgT);cfgT=setTimeout(sendCfg,700)}));
+['sh','rn'].forEach(id=>$('#'+id).addEventListener('change',sendCfg));
 let got=false;const _as=window.amState;window.amState=s=>{if(!got){got=true;sendCfg()}_as(s)};
 const poll=setInterval(()=>{if(got){clearInterval(poll);return}post({cmd:'hello'});if(++tries>16){clearInterval(poll);$('#dbg').textContent='Native player not connected. Is this the native build?'}},500);
 list();tick();
