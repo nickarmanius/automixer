@@ -49,14 +49,14 @@ button:focus-visible,.add:has(input:focus-visible){outline:3px solid var(--a);ou
 <div class="deck" id="d0"><span class="k">A</span><div class="t"><b id="t0">Empty</b><i class="bar"><u id="f0"></u></i></div></div>
 <div class="deck" id="d1"><span class="k">B</span><div class="t"><b id="t1">Empty</b><i class="bar"><u id="f1"></u></i></div></div>
 </section>
-<p class="next">Song ends in <b id="cd">&ndash;</b></p>
+<p class="next">Next mix in <b id="cd">&ndash;</b></p>
 <div class="ctl"><button id="pp" class="main">Add songs</button><button id="sk">Skip</button></div>
-<section class="set" style="opacity:.45">
-<label>Switch songs every (seconds)<input id="iv" type="number" disabled value="60"></label>
-<label>Fade length (seconds)<input id="fd" type="number" disabled value="5"></label>
-<label class="chk"><input id="sh" type="checkbox" disabled>Shuffle</label>
-<label class="chk"><input id="rn" type="checkbox" disabled>Start songs at a random position</label>
-<p class="note" style="grid-column:1/-1;margin:0">Stage 1 test: songs play one after another. These settings come in stage 2 and 3.</p>
+<section class="set">
+<label>Switch songs every (seconds)<input id="iv" type="number" inputmode="numeric" value="60"></label>
+<label>Fade length (seconds)<input id="fd" type="number" inputmode="numeric" value="5"></label>
+<label class="chk" style="opacity:.45"><input id="sh" type="checkbox" disabled style="opacity:.45">Shuffle</label>
+<label class="chk" style="opacity:.45"><input id="rn" type="checkbox" disabled>Start songs at a random position</label>
+<p class="note" style="grid-column:1/-1;margin:0">Stage 2: crossfade is on (interval at least 10 s, fade at most half of the interval). Shuffle and random start come in stage 3.</p>
 </section>
 <section>
 <div class="lh"><h2>Songs <span id="cnt"></span></h2><button class="add" id="addb">Add songs</button></div>
@@ -69,7 +69,7 @@ const $=s=>document.querySelector(s);
 const fmt=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
 const q=[];let n=0,busy=false;
 const post=m=>{q.push(m);if(!busy){busy=true;pump()}};
-function pump(){const m=q.shift();if(!m){busy=false;return}document.title='AMC|'+Date.now().toString(36)+(++n)+'|'+m.cmd+'|'+(m.i==null?-1:m.i);setTimeout(pump,200)}
+function pump(){const m=q.shift();if(!m){busy=false;return}document.title='AMC|'+Date.now().toString(36)+(++n)+'|'+m.cmd+'|'+(m.i==null?-1:m.i)+'|'+(m.j==null?-1:m.j);setTimeout(pump,200)}
 let S={songs:[],idx:-1,playing:false,started:false,pos:0,dur:0,err:''},sig='',ready=false,tries=0;
 function list(){const ol=$('#ls');ol.innerHTML='';$('#cnt').textContent=S.songs.length?'('+S.songs.length+')':'';
 S.songs.forEach((name,i)=>{const li=document.createElement('li'),b=document.createElement('button'),x=document.createElement('button');
@@ -78,16 +78,19 @@ x.className='x';x.textContent='\u00d7';x.setAttribute('aria-label','Remove '+nam
 function tick(){const n=S.songs.length,cur=S.idx>=0?S.songs[S.idx]:'Empty',nx=n>1&&S.idx>=0?S.songs[(S.idx+1)%n]:'Empty';
 $('#t0').textContent=cur;$('#t1').textContent=nx;
 $('#f0').style.width=(S.dur>0?S.pos/S.dur*100:0)+'%';$('#f1').style.width='0%';
-$('#d0').classList.toggle('on',S.playing);
+$('#d0').classList.toggle('on',S.playing);$('#d1').classList.toggle('on',!!S.fading);
 $('#cd').textContent=S.started?fmt(S.dur-S.pos):'\u2013';
 $('#pp').textContent=!n?'Add songs':S.playing?'Pause':'Play';
-$('#st').textContent=!n?'Add songs to begin':S.playing?'Playing':S.started?'Paused':'Ready';
+$('#st').textContent=!n?'Add songs to begin':S.fading?'Mixing':S.playing?'Playing':S.started?'Paused':'Ready';
 $('#dbg').textContent=(S.err?'Error: '+S.err+' ':'')+(S.log||'')}
 window.amState=s=>{S=s;const k=s.songs.join('\n')+'|'+s.idx+'|'+s.playing+'|'+s.started+'|'+s.err;if(k!==sig){sig=k;list()}tick()};
 $('#pp').onclick=()=>{if(!S.songs.length)post({cmd:'pick'});else post({cmd:'toggle'})};
 $('#sk').onclick=()=>post({cmd:'next'});
 $('#addb').onclick=()=>post({cmd:'pick'});
-let got=false;const _as=window.amState;window.amState=s=>{got=true;_as(s)};
+function sendCfg(){const iv=parseInt($('#iv').value),fd=parseInt($('#fd').value);if(iv>0&&fd>=0){post({cmd:'cfg',i:iv,j:fd});try{localStorage.setItem('am_cfg',JSON.stringify({iv,fd}))}catch(e){}}}
+try{const c=JSON.parse(localStorage.getItem('am_cfg')||'null');if(c&&c.iv>0&&c.fd>=0){$('#iv').value=c.iv;$('#fd').value=c.fd}}catch(e){}
+let cfgT;['iv','fd'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearTimeout(cfgT);cfgT=setTimeout(sendCfg,700)}));
+let got=false;const _as=window.amState;window.amState=s=>{if(!got){got=true;sendCfg()}_as(s)};
 const poll=setInterval(()=>{if(got){clearInterval(poll);return}post({cmd:'hello'});if(++tries>16){clearInterval(poll);$('#dbg').textContent='Native player not connected. Is this the native build?'}},500);
 list();tick();
 </script></body></html>
