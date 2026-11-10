@@ -1,5 +1,5 @@
 import re
-# AUTOMIXER NATIVE - STAGE 1
+# AUTOMIXER NATIVE - STAGE 2 (crossfade)
 p = 'ios/App/App/AppDelegate.swift'
 s = open(p).read()
 
@@ -36,6 +36,10 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     private var nextIndex = -1
     private var ended = false
     private var log: [String] = []
+    private var fader: AVAudioPlayer?
+    private var fadeEndsAt: Date?
+    private var mixInterval = 60
+    private var fadeSeconds = 5
 
     private let clock: DateFormatter = {
         let f = DateFormatter()
@@ -87,6 +91,8 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             self?.note("MEDIA SERVICES RESET")
         }
+        let mixTimer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.mixTick() }
+        RunLoop.main.add(mixTimer, forMode: .common)
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if !self.attached {
@@ -115,6 +121,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         lastSeq = parts[1]
         let cmd = parts[2]
         let i = Int(parts[3]) ?? -1
+        let j = parts.count > 4 ? (Int(parts[4]) ?? -1) : -1
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             switch cmd {
@@ -123,6 +130,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             case "next": self.next()
             case "play": self.play(at: i)
             case "remove": self.remove(at: i)
+            case "cfg": self.setConfig(i, j)
             default: self.pushState()
             }
         }
@@ -181,8 +189,48 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         }
     }
 
-    private func play(at i: Int, step: Int = 1, tries: Int = 0) {
+    private func effectiveFade() -> Double {
+        return Double(min(fadeSeconds, mixInterval / 2))
+    }
+
+    // Second of the current song at which the next song starts.
+    private func mixPoint(_ p: AVAudioPlayer) -> Double {
+        return max(1.0, min(Double(mixInterval), p.duration - effectiveFade()))
+    }
+
+    private func dropFader() {
+        fader?.stop()
+        fader = nil
+        fadeEndsAt = nil
+    }
+
+    // Ends a fade at once (used when pausing or interrupted): old song off, new song at full volume.
+    private func settleFade() {
+        guard fader != nil else { return }
+        dropFader()
+        player?.setVolume(1, fadeDuration: 0)
+    }
+
+    private func setConfig(_ iv: Int, _ fd: Int) {
+        if iv > 0 { mixInterval = max(10, min(3600, iv)) }
+        if fd >= 0 { fadeSeconds = min(30, fd) }
+        note("cfg every \(mixInterval)s fade \(fadeSeconds)s")
+        pushState()
+    }
+
+    // Runs 5 times per second: ends a finished fade and starts the next mix when it is time.
+    private func mixTick() {
+        if let fo = fadeEndsAt, Date() >= fo { dropFader() }
+        guard started, !ended, !songs.isEmpty, let p = player, p.isPlaying else { return }
+        if p.currentTime >= mixPoint(p) {
+            note("auto mix")
+            play(at: (index + 1) % songs.count, fade: true)
+        }
+    }
+
+    private func play(at i: Int, step: Int = 1, tries: Int = 0, fade: Bool = false) {
         guard i >= 0 && i < songs.count else { return }
+        dropFader()
         var chosen: AVAudioPlayer? = nil
         if i == nextIndex, let pre = nextPlayer { chosen = pre }
         nextPlayer = nil
@@ -194,7 +242,15 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             if chosen == nil { chosen = try makePlayer(songs[i].url) }
             if let np = chosen {
                 np.delegate = self
-                player?.stop()
+                let old = player
+                let fadeTime = effectiveFade()
+                let mixing = fade && fadeTime > 0 && (old?.isPlaying ?? false)
+                if mixing {
+                    np.volume = 0
+                } else {
+                    old?.stop()
+                    np.volume = 1
+                }
                 player = np
                 index = i
                 started = true
@@ -206,6 +262,18 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
                     ok = np.play()
                 }
                 note("play \(i) ok=\(ok)")
+                if mixing, let o = old {
+                    if ok {
+                        o.delegate = nil
+                        np.setVolume(1, fadeDuration: fadeTime)
+                        o.setVolume(0, fadeDuration: fadeTime)
+                        fader = o
+                        fadeEndsAt = Date().addingTimeInterval(fadeTime + 0.5)
+                    } else {
+                        np.volume = 1
+                        o.stop()
+                    }
+                }
             }
         } catch {
             // This song cannot be opened: remember its name and try the next one.
@@ -213,7 +281,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             lastError = "Cannot play: " + bad
             note("skipped " + bad + " exists=" + String(FileManager.default.fileExists(atPath: songs[i].url.path)))
             if tries < songs.count - 1 {
-                play(at: (i + step + songs.count) % songs.count, step: step, tries: tries + 1)
+                play(at: (i + step + songs.count) % songs.count, step: step, tries: tries + 1, fade: fade)
                 return
             }
         }
@@ -225,6 +293,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
     private func pause() {
         guard let p = player, p.isPlaying else { return }
         p.pause()
+        settleFade()
         updateNowPlaying()
         pushState()
     }
@@ -262,17 +331,18 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             pushState()
             return
         }
-        play(at: (index - 1 + songs.count) % songs.count, step: -1)
+        play(at: (index - 1 + songs.count) % songs.count, step: -1, fade: true)
     }
 
     private func next() {
         guard !songs.isEmpty else { return }
-        play(at: (index + 1) % songs.count)
+        play(at: (index + 1) % songs.count, fade: true)
     }
 
     private func remove(at i: Int) {
         guard i >= 0 && i < songs.count else { return }
         if i == index {
+            dropFader()
             player?.stop()
             player = nil
             started = false
@@ -307,6 +377,7 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             guard let self = self else { return }
             self.note(type == .began ? "interruption began" : "interruption ended")
             if type == .began {
+                self.settleFade()
                 self.updateNowPlaying()
                 self.pushState()
             } else if AVAudioSession.InterruptionOptions(rawValue: opts).contains(.shouldResume) {
@@ -327,8 +398,8 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: songs[index].name,
             MPMediaItemPropertyArtist: "Automixer",
-            MPMediaItemPropertyPlaybackDuration: p.duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: p.currentTime,
+            MPMediaItemPropertyPlaybackDuration: mixPoint(p),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: min(p.currentTime, mixPoint(p)),
             MPNowPlayingInfoPropertyPlaybackRate: p.isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
@@ -373,8 +444,9 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
             "idx": index,
             "playing": player?.isPlaying ?? false,
             "started": started,
-            "pos": player?.currentTime ?? 0.0,
-            "dur": player?.duration ?? 0.0,
+            "pos": player.map { min($0.currentTime, self.mixPoint($0)) } ?? 0.0,
+            "dur": player.map { self.mixPoint($0) } ?? 0.0,
+            "fading": fader != nil,
             "err": lastError,
             "log": log.joined(separator: "\n")
         ]
@@ -386,4 +458,4 @@ final class NativePlayer: NSObject, UIDocumentPickerDelegate, AVAudioPlayerDeleg
 '''
 s += player
 open(p, 'w').write(s)
-print('AppDelegate patched (native stage 1)')
+print('AppDelegate patched (native stage 2)')
